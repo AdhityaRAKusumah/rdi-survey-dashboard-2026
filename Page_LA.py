@@ -128,6 +128,11 @@ def build_la_fuel_records(data, eligible_only=True):
                 "Current Daily Use": current.loc[index],
                 "Daily Difference": delta,
                 "Weekly Difference": delta * 7,
+                "Net Daily Change (Before - Current)": (
+                    float(initial.loc[index] - current.loc[index])
+                    if pd.notna(initial.loc[index]) and pd.notna(current.loc[index])
+                    else -delta
+                ),
                 "Daily Unit": spec["Daily Unit"],
                 "Weekly Unit": spec["Weekly Unit"],
                 "Direction": "Increase" if delta > 0 else "Decrease" if delta < 0 else "No Change",
@@ -221,7 +226,8 @@ def build_la_stove_inventory(data):
                 "Stove Type": stove_type,
                 "Before Units": before_value,
                 "Current Units": current_value,
-                "Derived Difference": current_value - before_value,
+                "Current Minus Before": current_value - before_value,
+                "Net Change (Before - Current)": before_value - current_value,
                 "Transition": transition,
             })
     return pd.DataFrame(rows)
@@ -246,7 +252,7 @@ def la_sample_summary(data, full_sample=False):
             "not own biogas and the referenced neighbor does.",
             f"Among eligible households, {stove_change:,} reported a stove-type change and {fuel_change:,} "
             "reported a fuel-quantity change relative to the neighbor comparison point.",
-            f"Positive measured fuel differences are recorded for {positive_households:,} eligible households.",
+            f"Measured fuel-use increases (Current > Before) are recorded for {positive_households:,} eligible households.",
     ]
     caveats = [
             "The workbook establishes a before/after timeline but does not directly ask whether the change was "
@@ -302,7 +308,7 @@ def la_fuel_stove_summary(data):
     render_summary_panel(
         "Measured Fuel Change and Potential Leakage",
         [
-            f"{positive_households:,} eligible households recorded at least one positive measured fuel-use change.",
+            f"{positive_households:,} eligible households recorded at least one measured fuel-use increase (Current > Before).",
             f"{after_count:,} positive-change households were recorded after the neighbor installation year; "
             f"{same_year_count:,} occurred in the same calendar year and remain temporally ambiguous.",
             f"{conflict_count:,} positive-change households predate the neighbor installation and are excluded "
@@ -310,6 +316,7 @@ def la_fuel_stove_summary(data):
         ] if positive_households else ["No positive quantified fuel changes are available for the current filter."],
         caveats=[
             "Even changes recorded after installation are temporal associations, not confirmed causal leakage.",
+            "Net change tables use Before - Current: positive values indicate lower current consumption.",
             "Firewood and LPG are expressed in kg/week. Kerosene remains in L/week because the dataset does not "
             "provide an approved density conversion factor.",
         ],
@@ -574,28 +581,29 @@ def render_stove_difference(data):
         return
     chart_data = inventory.groupby("Stove Type", as_index=False).agg(
         **{
-            "Average Unit Change per Household": ("Derived Difference", "mean"),
-            "Total Derived Unit Change": ("Derived Difference", "sum"),
+            "Average Net Change per Household": ("Net Change (Before - Current)", "mean"),
+            "Total Net Change": ("Net Change (Before - Current)", "sum"),
             "Valid N": ("Respondent Index", "nunique"),
         }
-    ).sort_values("Average Unit Change per Household")
-    chart_data["Direction"] = chart_data["Average Unit Change per Household"].map(
-        lambda value: "Increase" if value > 0 else "Decrease" if value < 0 else "No Change"
+    ).sort_values("Average Net Change per Household")
+    chart_data["Direction"] = chart_data["Average Net Change per Household"].map(
+        lambda value: "Decrease" if value > 0 else "Increase" if value < 0 else "No Change"
     )
     fig = px.bar(
         chart_data,
-        x="Average Unit Change per Household",
+        x="Average Net Change per Household",
         y="Stove Type",
         orientation="h",
         color="Direction",
-        title="Derived Net Change in Stove Ownership (Current - Before)",
+        title="Net Change in Stove Ownership (Before - Current)",
         text_auto=".2f",
-        hover_data=["Total Derived Unit Change", "Valid N"],
-        color_discrete_map={"Increase": "#2C9C69", "Decrease": "#D95D52", "No Change": "#7C8AA5"},
+        hover_data=["Total Net Change", "Valid N"],
+        color_discrete_map={"Decrease": "#2C9C69", "Increase": "#E89B2D", "No Change": "#7C8AA5"},
     )
     fig.add_vline(x=0, line_dash="dash", line_color="#7C8AA5")
-    fig.update_layout(yaxis_title=None)
+    fig.update_layout(yaxis_title=None, xaxis_title="Average Unit Difference (Before - Current)")
     st.plotly_chart(apply_plot_theme(fig), use_container_width=True, key=unique_chart_key("la_stove_difference"))
+    st.caption("Positive values indicate fewer stove units currently owned; negative values indicate an increase in current ownership.")
 
 
 def render_la_stove_transitions(data):
@@ -684,7 +692,7 @@ def render_la_stove_consistency(data):
         Changed=inventory["Transition"].isin(["Started Using", "Stopped Using"])
     ).groupby("Respondent Index")["Changed"].any().reindex(data.index, fill_value=False)
     any_increase = inventory.assign(
-        Increased=inventory["Derived Difference"].gt(0)
+        Increased=inventory["Current Minus Before"].gt(0)
     ).groupby("Respondent Index")["Increased"].any().reindex(data.index, fill_value=False)
     checks = pd.DataFrame([
         ("Reported type change, but no type-presence transition", int((reported_type_change & ~presence_change).sum())),
@@ -693,7 +701,7 @@ def render_la_stove_consistency(data):
         ("Reported no added stove, but at least one stove type increased", int((~reported_added & any_increase).sum())),
     ], columns=["Consistency Check", "Households"])
     st.dataframe(checks, use_container_width=True, hide_index=True)
-    st.caption("Q38 is retained only for data-quality review. Analytical net change is recalculated directly from Q33 minus Q32 because Q38 uses an inconsistent sign convention.")
+    st.caption("Q38 is retained only for data-quality review. Analytical net change is recalculated as Q32 minus Q33 (Before - Current) because Q38 uses an inconsistent sign convention.")
 
 
 def add_la_fuel_timing(data, records):
@@ -811,6 +819,7 @@ def render_la_fuel_leakage(data):
         comparison_rows.extend([
             {"Fuel": fuel, "Period": "Before", "Median Daily Use": subset["Initial Daily Use"].median(), "Unit": unit, "Valid N": int(subset["Initial Daily Use"].notna().sum())},
             {"Fuel": fuel, "Period": "Current", "Median Daily Use": subset["Current Daily Use"].median(), "Unit": unit, "Valid N": int(subset["Current Daily Use"].notna().sum())},
+            {"Fuel": fuel, "Period": "Net Change (Before - Current)", "Median Daily Use": subset["Net Daily Change (Before - Current)"].median(), "Unit": unit, "Valid N": int(subset["Net Daily Change (Before - Current)"].notna().sum())},
         ])
     comparison = pd.DataFrame(comparison_rows)
     for fuel in ["Firewood", "LPG", "Kerosene"]:
@@ -824,11 +833,39 @@ def render_la_fuel_leakage(data):
             color="Period",
             text_auto=".2f",
             hover_data=["Valid N"],
-            title=f"{fuel}: Median Daily Use Before vs Current",
-            color_discrete_sequence=PLOTLY_COLORWAY,
+            title=f"{fuel}: Median Daily Use and Net Change",
+            color_discrete_map={
+                "Before": "#184F8F",
+                "Current": "#6BAED6",
+                "Net Change (Before - Current)": "#2C9C69",
+            },
         )
+        fig.add_hline(y=0, line_dash="dash", line_color="#7C8AA5")
         fig.update_layout(showlegend=False, yaxis_title=subset["Unit"].iloc[0])
         st.plotly_chart(apply_plot_theme(fig), use_container_width=True, key=unique_chart_key(f"la_fuel_before_after_{fuel}"))
+
+    net_summary = (
+        records.groupby(["Fuel", "Daily Unit"], as_index=False)
+        .agg(
+            **{
+                "Mean Net Change": ("Net Daily Change (Before - Current)", "mean"),
+                "Median Net Change": ("Net Daily Change (Before - Current)", "median"),
+                "Valid Households": ("Respondent Index", "nunique"),
+            }
+        )
+        .rename(columns={"Daily Unit": "Unit"})
+    )
+    st.markdown("#### Net Change Summary (Before - Current)")
+    st.dataframe(
+        net_summary,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Mean Net Change": st.column_config.NumberColumn(format="%.2f"),
+            "Median Net Change": st.column_config.NumberColumn(format="%.2f"),
+        },
+    )
+    st.caption("Positive net change means current fuel use is lower than before; negative net change means current fuel use is higher.")
 
     direction = records.groupby(["Fuel", "Direction"], as_index=False).size().rename(columns={"size": "Households"})
     direction["Share"] = direction["Households"] / direction.groupby("Fuel")["Households"].transform("sum") * 100
@@ -839,7 +876,7 @@ def render_la_fuel_leakage(data):
         color="Direction",
         barmode="stack",
         text=direction["Share"].map(lambda value: f"{value:.1f}%" if value >= 5 else ""),
-        title="Direction of Measured Fuel-Use Change",
+        title="Households by Direction of Measured Fuel-Use Change",
         category_orders={"Direction": ["Increase", "No Change", "Decrease"]},
         color_discrete_map={"Increase": "#E89B2D", "No Change": "#7C8AA5", "Decrease": "#2C9C69"},
     )
@@ -1141,12 +1178,12 @@ def render_fuel_difference_distribution(data):
                 break
         if col:
             values = pd.to_numeric(data[col], errors="coerce").dropna()
-            rows.extend({"Fuel": fuel, "Difference": value} for value in values)
+            rows.extend({"Fuel": fuel, "Net Change": -value} for value in values)
     chart_data = pd.DataFrame(rows)
     if chart_data.empty:
         st.info("Fuel difference distribution columns are not available or do not contain valid numeric data.")
         return
-    fig = px.box(chart_data, x="Fuel", y="Difference", points="outliers", title="Fuel Use Difference Distribution by Fuel (After - Before)")
+    fig = px.box(chart_data, x="Fuel", y="Net Change", points="outliers", title="Net Change in Fuel Use by Fuel (Before - Current)")
     fig.add_hline(y=0, line_dash="dash", line_color="#7C8AA5")
     st.plotly_chart(apply_plot_theme(fig), use_container_width=True, key=unique_chart_key("la_fuel_difference_distribution"))
 
@@ -1279,7 +1316,7 @@ def Page_LA():
                 f"({stove_change_share:.1f}%) reported changing stove type.",
                 f"{added_stoves:,} eligible households "
                 f"({added_stove_share:.1f}%) reported adding a stove since the neighbor installation.",
-                "Before-current comparisons and net changes are calculated directly from Q32 and Q33.",
+                "Net change is calculated directly as Q32 minus Q33 (Before - Current). Positive values indicate fewer current stove units.",
             ],
             caveats=[
                 "Reported changes are temporally associated with the neighbor comparison point; the questionnaire does not prove that the neighboring biodigester caused them."
