@@ -2351,7 +2351,7 @@ def Page_BUS():
 
     # Add home button
     if st.button("Home", key="Home BUS", type="primary"):
-        st.switch_page("new_main.py", query_params={"utm_source": "new_main.py"})
+        st.switch_page("main_app.py", query_params={"utm_source": "main_app.py"})
 
     # Process BUS data
     BUS_data = load_bus_data()
@@ -4360,5 +4360,5 @@ def Page_BUS():
 
     render_footer()
 
-pg = st.navigation([Page_BUS, st.Page("new_main.py")], position="hidden")
+pg = st.navigation([Page_BUS, st.Page("main_app.py")], position="hidden")
 pg.run()
