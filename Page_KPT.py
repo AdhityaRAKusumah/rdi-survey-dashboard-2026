@@ -1817,7 +1817,7 @@ def Page_KPT():
     render_page_header("Kitchen Performance Test", "Survey 2026")
 
     if st.button("Home", key="Home KPT", type="primary"):
-        st.switch_page("new_main.py", query_params={"utm_source": "new_main.py"})
+        st.switch_page("main_app.py", query_params={"utm_source": "main_app.py"})
 
     bu, nbu, combined = load_kpt_data()
     dataset = st.sidebar.radio("Dataset", ["Biogas User", "Non-Biogas User", "Combined"], horizontal=False)
@@ -1836,5 +1836,5 @@ def Page_KPT():
     render_footer()
 
 
-pg = st.navigation([Page_KPT, st.Page("new_main.py")], position="hidden")
+pg = st.navigation([Page_KPT, st.Page("main_app.py")], position="hidden")
 pg.run()
