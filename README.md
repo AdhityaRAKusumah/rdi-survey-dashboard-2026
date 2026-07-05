@@ -9,7 +9,6 @@ The dashboard serves as an analytical tool to measure user satisfaction, assess 
 - **main_app.py**: The main Streamlit application that serves as the entry point and handles the user interface
 - **chart_gen.py**: A utility class for generating and customizing visualizations within the dashboard
 - **requirements.txt**: List of Python package dependencies required to run the application
-- **survey_data-G_3.csv**: Sample dataset containing the biogas user survey results
 
 ## Getting Started
 
